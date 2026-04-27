@@ -1,0 +1,296 @@
+\documentclass[a4paper,conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage[nocompress]{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{lipsum}
+\usetikzlibrary{arrows.meta, positioning, fit}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Quality-Constrained Prompting for LLM-Based STEM Quiz Generation}
+
+
+\maketitle
+
+\begin{abstract}
+Large Language Models (LLMs) have gained growing attention as tools for creating quiz items in STEM education, though commonly used prompts often result in unclear phrasing, implausible scenarios, calculation mistakes, and poorly designed distractors. At the same time, manually developing high-quality Multiple-Choice Questions (MCQs) continues to demand considerable time and resources from educators. This paper treats prompt design as the primary control mechanism for LLM-based STEM item generation and compares three prompting structures for Grade 12 single-item MCQs: (S1) a Standard Prompt (SP) specifying scope and format, (S2) SP with hidden chain-of-thought guidance (SP+CoT), and (S3) SP with explicit quality constraints (SP+QC) aligned with a four-aspect rubric. Using five generator models across four subjects (mathematics, biology, physics, chemistry), we generated 3,000 items and evaluated them with a separate Gemini 2.5 Pro verifier that scored clarity, context, quality of working, final-answer accuracy, latency, and BERTScore similarity between generator and verifier solutions. Across models, SP+QC consistently improved rubric scores and final-answer accuracy over SP and SP+CoT, with Gemini under SP+QC achieving up to 0.96 correctness and clarity and context scores above 4.7 on a 0–5 scale. The findings suggest that quality-constrained prompting, combined with an LLM-as-judge evaluation framework, can facilitate dependable draft question banks, though human review remains essential before classroom deployment.
+\end{abstract}
+
+\renewcommand{\IEEEkeywordsname}{Keywords}
+\begin{IEEEkeywords}
+Automatic Item Generation, Large Language Models, Prompt Engineering, Question Generation, STEM Education
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Generative artificial intelligence based on large language models is now widely deployed in higher education for academic chatbots, information services, and learning support \cite{muna2025siakif,genAIHigherEdu}. By contrast, constructing high-quality multiple-choice questions (MCQs) still requires substantial human effort: items must have clear stems, realistic numerical values and units, a single correct answer, and distractors that reflect plausible misconceptions rather than random noise \cite{rahmah2020}. Simply asking an LLM to make a question often leads to ambiguous wording, unrealistic scenarios, calculation mistakes, and distractors that are either trivial or off-topic. 
+
+Prior work on STEM automatic item generation shows that performance is highly sensitive to prompt design and to whether the model is encouraged to reason step by step, yet many prompts remain ad hoc, are not aligned with item-writing rubrics, and are evaluated on a narrow set of models and subjects \cite{chan2025,rahmah2020}. This paper therefore treats prompting as the primary control handle for LLM-based STEM quiz generation. We compare three prompting structures for Grade 12 single-item MCQs across four subjects and five generator models: a Standard Prompt that specifies scope and format, a variant with hidden chain-of-thought guidance, and a proposed quality-constrained prompt (SP+QC) that encodes explicit constraints on clarity, context realism, difficulty, distractor design, and numerical hygiene. A separate Gemini 2.5 Pro configuration serves as an LLM-as-judge, scoring each item on rubric dimensions and final-answer accuracy, allowing us to quantify how prompt structure and model choice jointly affect item quality over 3{,}000 generated questions.
+
+\section{Related Work}
+
+Generative AI is now widely deployed in higher education for feedback, tutoring, and academic services. Studies report institutional chatbots that answer regulations and administrative queries at scale and analyse their deployment across platforms \cite{genAIHigherEdu,muna2025siakif,acmEval2}. These systems show that LLMs can be embedded into university workflows, but they focus on conversational support rather than on generating assessment items with explicit control over item quality.
+
+In STEM assessment, automatic item generation has been explored using both parameterised templates and LLM prompting. Recent work shows that prompt structure strongly affects correctness, notation, and distractor quality for STEM MCQs, and documents typical error patterns that still require human screening \cite{chan2025,acmEval1}. From the psychometrics side, analyses of physics and chemistry exams highlight that many teacher-written MCQs fail basic criteria such as clarity, distractor effectiveness, or higher-order thinking even when overall reliability is acceptable \cite{rahmah2020,ijies2023}. These findings motivate the clarity, context, and reasoning dimensions encoded in our rubric and in the SP+QC design.
+
+Several projects in the same ecosystem investigate educational chatbots and question-answering systems that combine retrieval, graphs, and LLMs for moderation or domain-specific support \cite{hartawanLBE,lukmanLBE,nuraisyahLBE}. Beyond education, shared tasks and studies on MT and NLG metrics examine how automatic measures relate to human judgements and discuss open issues in robustness and comparability \cite{wmt21metrics,acl2024Eval,acmEval3,evalNLP2023}. This study use these evaluation papers mainly as background motivation for reporting both rubric scores and similarity-based indicators, while our technical focus remains on prompt design for STEM quiz generation.
+
+Recent LLM-based item generation studies evaluate prompt strategies for producing school-level and course-level MCQs, showing that prompt design can improve perceived question quality but that common item-writing flaws and the need for screening still persist \cite{maity2025,tran2023,arif2024}. 
+Other approaches explicitly couple MCQ generation with automated quality evaluation using strong LLM assessors to reduce expert workload when constructing question banks at scale \cite{mucciaccia2025}. 
+Retrieval-augmented generation has also been explored as a configurable component for question generation in domain-specific settings, while broader evidence syntheses discuss educational opportunities and governance risks of ChatGPT adoption, including academic integrity and bias concerns \cite{aisyah2024generating,munaye2025}. 
+Outside educational assessment, applied ML studies on electronic-nose--based medical detection and sentiment analysis exemplify optimization-driven modeling and empirical evaluation practices that motivate controlled pipelines and multi-criteria assessment in automated systems \cite{sarno2020electronic,aulia2023optimization,firmanto2018prediction,khotimah2019sentiment}.
+
+
+\section{Methodology}
+
+\subsection{Task and Data Scope}
+
+The task in this study is automatic generation of single-item MCQs for four Grade 12 STEM subjects: mathematics, biology, physics, and chemistry. Each item must contain a clear stem, four answer options labelled A to D with exactly one correct key, three plausible distractors, and a short worked solution of three to six lines in plain text. All prompts, model outputs, and evaluations are in English.
+
+For every combination of prompting structure, generator model, and subject we generate \(N_c = 50\) items, where \(c\) indexes a configuration. With three prompting structures, five generator models, and four subjects this yields 60 configurations and a total of 3{,}000 items. The generator models consist of one cloud model from the Gemini family and four open models representative of current general-purpose LLMs. A separate Gemini configuration is used only as a verifier and never as a question generator.
+
+\begin{table}[!t]
+\caption{Prompting structures compared in this study.}
+\label{tab:prompting-structures}
+\centering
+\begin{tabularx}{\linewidth}{|l|l|X|}
+\hline
+\textbf{Structure} & \textbf{Short name} & \textbf{Key characteristics} \\ \hline
+S1 & Standard Prompt (SP) &
+Topic-specific scope, numerical range or units, and medium difficulty with no explicit
+reasoning cues or explicit quality constraints in the prompt. \\ \hline
+S2 & SP + Chain-of-Thought (SP+CoT) &
+Extends S1 with hidden multi-step reasoning guidance. Distractors are described
+as step-level mistakes, but there is no explicit quality rubric in the prompt. \\ \hline
+S3 & SP + Quality Constraints (SP+QC) &
+Builds on S1 by adding explicit constraints on clarity, context realism,
+difficulty, distractor effectiveness, and numerical hygiene, aligned with
+the four-aspect evaluation rubric, without explicit chain-of-thought guidance. \\ \hline
+\end{tabularx}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.75\linewidth]{method-agents.png}
+\caption{Overview of the question generation and evaluation pipeline. Generator agents produce MCQs under one of the prompting structures, and a separate verifier agent scores each item using a four-aspect rubric.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Prompting Structures}
+
+Prompt design is the main control lever in this work. We compare three prompting structures, summarised in Table~\ref{tab:prompting-structures} and illustrated in Figure~\ref{fig:pipeline}. All prompts adopt a Grade 12 teacher persona for the target subject and enforce a fixed output format with one MCQ and one short solution.
+
+S1: Standard Prompting (SP).  
+The first structure specifies subject, topic scope, grade level, and output format, but does not mention any particular reasoning strategy. The model is asked to write one medium-difficulty MCQ with realistic numbers, a unique correct answer, and three distractors that represent common student errors.
+
+S2: SP with hidden Chain-of-Thought (SP+CoT).  
+The second structure extends SP by adding guidance that encourages the model to carry out multi-step reasoning internally. The prompt instructs the model to plan and check its working before writing the final stem, options, and short explanation, while explicitly forbidding it from printing the detailed chain of thought. Distractors are described as corresponding to plausible intermediate-step mistakes.
+
+S3: SP with Quality Constraints (SP+QC).  
+The third structure is the proposed quality-constrained prompt. It starts from the same content as S1 and then adds explicit constraints aligned with a four-aspect rubric. The instructions emphasise clarity and consistent notation, realistic and conceptually sound contexts, medium difficulty with two or three reasoning steps, and effective distractors with clean numerical hygiene, including units and rounding. Unlike S2, S3 does not mention chain-of-thought reasoning; the focus is on satisfying rubric-like quality constraints while keeping the response short.
+
+\subsection{Evaluation and Comparison}
+
+Each generated item is evaluated by a separate verifier model that plays the role of an LLM-as-judge. The verifier is a Gemini 2.5 Pro configuration that receives the stem, the four options, the key chosen by the generator, and the generator's short solution. The instructions require the verifier to first solve the item independently and only then compare its own reasoning with the generator's solution. The judgement is based on a four-aspect rubric: Clarity, Context accuracy, Final answer accuracy, and Quality of working, as summarised in Table~\ref{tab:rubric}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Rubric used by the verifier model.}
+\label{tab:rubric}
+\begin{tabular}{|p{3.0cm}|p{5.0cm}|}
+\hline
+\textbf{Aspect} & \textbf{Guiding questions for the verifier} \\ \hline
+Clarity (question) &
+Is the wording understandable and unambiguous? Is the notation consistent? Is there enough information for a single correct answer? \\ \hline
+Context accuracy (question) &
+Is the scientific or mathematical context realistic and factually correct? Are the numerical values and units plausible for Grade 12 STEM problems? \\ \hline
+Final answer accuracy (answer) &
+Does the key chosen by the generator match the answer obtained from the verifier's own solution to the problem? \\ \hline
+Quality of working (answer) &
+Are the main reasoning steps, formulas, and calculations sound? Are units and rounding handled consistently, without hidden mistakes or contradictions? \\ \hline
+\end{tabular}
+\normalsize
+\end{table}
+
+For each aspect the verifier assigns a score on a 0 to 5 scale, where higher values indicate better quality. Table~\ref{tab:scores} summarises how these scores are interpreted. A score of 0 corresponds to items that clearly fail the rubric, scores of 1 to 2 denote weak items with major issues, scores of 3 to 4 represent acceptable to good items with only minor issues, and a score of 5 denotes items that fully satisfy the rubric.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Interpretation of rubric scores assigned by the verifier (0 to 5 scale).}
+\label{tab:scores}
+\begin{tabular}{|c|p{5.5cm}|}
+\hline
+\textbf{Score} & \textbf{Description} \\ \hline
+0 &
+Completely unacceptable; the question or answer fails the rubric because of missing data, wrong formulas, or incoherent reasoning. \\ \hline
+1 to 2 &
+Weak; the item is partly on topic but has major issues in clarity, context, or working that require substantial revision. \\ \hline
+3 to 4 &
+Acceptable to good; the item meets most rubric criteria with only minor issues and is suitable for typical classroom quizzes. \\ \hline
+5 &
+Excellent; the item fully satisfies the rubric with clear wording, realistic context, correct reasoning, and a unique correct answer. \\ \hline
+\end{tabular}
+\normalsize
+\end{table}
+
+For each configuration we report mean Clarity, Context, and Quality-of-working scores, Final Answer Accuracy (FAA, the proportion of items the verifier marks correct), and average latency per item including generator and verifier calls. We also compute BERTScore F\(_1\) similarity between generator and verifier solutions and average it as BERTMean \cite{hanna2021finegrained}. In the analysis, BERTMean values above 0.80 are treated purely as an explanation-alignment signal, while FAA and the rubric scores represent correctness and overall item quality.
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Average performance per prompting structure, model, and topic. FAA (Final Answer Accuracy) is the proportion of items judged correct by the verifier. BERT score is computed between the generator's and verifier's solutions. Clarity, Context, and Q.Work are rubric scores on a 0 to 5 scale.}
+\label{tab:main-results}
+\begin{tabular}{|c|l|l|r|r|r|r|r|r|}
+\hline
+\textbf{Prompt} & \textbf{Model} & \textbf{Topic} & \textbf{Time (ms)} & \textbf{FAA} & \textbf{BERT score} & \textbf{Clarity} & \textbf{Context} & \textbf{Q.Work} \\
+\hline
+\multirow{20}{*}{S1}
+  & \multirow{4}{*}{Gemini} & Biology     & \textbf{2178.64} & \textbf{0.78} & 0.889 & 4.35 & \textbf{4.75} & \textbf{4.02} \\
+  &                         & Chemistry   & \textbf{1888.12} & \textbf{0.76} & 0.893 & \textbf{4.85} & 4.37 & \textbf{4.22} \\
+  &                         & Mathematics & \textbf{2398.76} & 0.64          & 0.887 & \textbf{4.46} & 4.63 & \textbf{3.59} \\
+  &                         & Physics     & \textbf{2478.90} & 0.52          & 0.887 & \textbf{4.55} & 4.44 & 3.26 \\ \cline{2-9}
+  & \multirow{4}{*}{Gemma}  & Biology     & \textbf{2836.46} & 0.54          & 0.887 & 3.78          & 4.60 & 2.99 \\
+  &                         & Chemistry   & \textbf{3067.28} & 0.34          & 0.899 & \textbf{4.59} & 3.31 & \textbf{4.51} \\
+  &                         & Mathematics & \textbf{2738.28} & 0.38          & 0.886 & \textbf{4.42} & \textbf{4.67} & 2.84 \\
+  &                         & Physics     & \textbf{2644.96} & 0.42          & 0.886 & \textbf{4.42} & \textbf{4.65} & 3.34 \\ \cline{2-9}
+  & \multirow{4}{*}{LLaMA}  & Biology     & 39511.98         & 0.66          & 0.874 & 3.51          & 3.98 & 2.69 \\
+  &                         & Chemistry   & 71540.68         & 0.20          & 0.863 & 3.06          & 2.98 & 0.54 \\
+  &                         & Mathematics &  8705.64         & 0.30          & 0.888 & 3.02          & 3.45 & 1.78 \\
+  &                         & Physics     & 80454.40         & 0.28          & 0.874 & 3.07          & 2.46 & 0.87 \\ \cline{2-9}
+  & \multirow{4}{*}{Phi}    & Biology     &  7304.84         & \textbf{0.72} & 0.869 & 2.65          & 3.99 & 3.20 \\
+  &                         & Chemistry   &  9531.10         & 0.54          & 0.862 & 2.16          & 2.78 & 1.94 \\
+  &                         & Mathematics & 17279.78         & 0.32          & 0.860 & 1.19          & 3.27 & 1.40 \\
+  &                         & Physics     & 10058.82         & 0.46          & 0.868 & 2.55          & 3.94 & 2.14 \\ \cline{2-9}
+  & \multirow{4}{*}{Qwen}   & Biology     & 15156.76         & 0.36          & 0.866 & 3.81          & 4.16 & 1.47 \\
+  &                         & Chemistry   & 14705.24         & 0.38          & 0.868 & \textbf{4.55} & 4.21 & 2.75 \\
+  &                         & Mathematics & 10413.74         & 0.54          & 0.905 & \textbf{4.82} & \textbf{4.94} & 3.34 \\
+  &                         & Physics     &  7352.84         & 0.30          & 0.890 & \textbf{4.87} & 4.42 & 2.26 \\
+\hline
+\multirow{20}{*}{S2}
+  & \multirow{4}{*}{Gemini} & Biology     & \textbf{2133.64} & \textbf{0.86} & 0.882 & \textbf{4.51} & \textbf{4.72} & \textbf{4.29} \\
+  &                         & Chemistry   & \textbf{2249.46} & \textbf{0.76} & 0.894 & \textbf{4.62} & 4.42          & \textbf{3.80} \\
+  &                         & Mathematics & \textbf{2606.04} & 0.66          & 0.892 & \textbf{4.46} & 4.50          & 3.33 \\
+  &                         & Physics     & \textbf{2450.80} & 0.48          & 0.882 & \textbf{4.49} & 4.53          & 3.12 \\ \cline{2-9}
+  & \multirow{4}{*}{Gemma}  & Biology     & 11242.28         & 0.36          & 0.871 & 1.87          & 2.79 & 0.72 \\
+  &                         & Chemistry   & 12744.04         & 0.28          & 0.883 & 2.70          & 2.14 & 0.80 \\
+  &                         & Mathematics & 17311.32         & 0.46          & 0.890 & 3.71          & 3.71 & 2.77 \\
+  &                         & Physics     & 13443.36         & 0.06          & 0.871 & 3.02          & 3.22 & 0.71 \\ \cline{2-9}
+  & \multirow{4}{*}{LLaMA}  & Biology     &  7442.76         & 0.60          & 0.870 & 3.35          & 3.65 & 2.59 \\
+  &                         & Chemistry   & 10588.88         & 0.20          & 0.855 & 2.04          & 1.53 & 0.16 \\
+  &                         & Mathematics & 20803.32         & 0.28          & 0.880 & 2.41          & 2.92 & 1.09 \\
+  &                         & Physics     &  9430.80         & 0.14          & 0.864 & 2.62          & 3.31 & 1.11 \\ \cline{2-9}
+  & \multirow{4}{*}{Phi}    & Biology     & 15339.26         & 0.54          & 0.863 & 2.42          & 3.11 & 2.14 \\
+  &                         & Chemistry   & 15874.74         & 0.38          & 0.861 & 1.23          & 2.06 & 1.07 \\
+  &                         & Mathematics & 12678.20         & 0.38          & 0.857 & 1.85          & 2.59 & 1.11 \\
+  &                         & Physics     & 16243.44         & 0.44          & 0.855 & 1.68          & 2.81 & 1.35 \\ \cline{2-9}
+  & \multirow{4}{*}{Qwen}   & Biology     & 15749.28         & 0.38          & 0.879 & 3.68          & 4.25 & 1.88 \\
+  &                         & Chemistry   & 18163.88         & 0.26          & 0.886 & 3.69          & 3.61 & 1.82 \\
+  &                         & Mathematics & 19317.68         & 0.40          & 0.868 & 3.35          & 4.55 & 2.46 \\
+  &                         & Physics     & 16531.78         & 0.32          & 0.863 & 3.94          & 3.97 & 1.72 \\
+\hline
+\multirow{20}{*}{\textbf{S3}}
+  & \multirow{4}{*}{\textbf{Gemini}} & Biology     & \textbf{3511.16} & \textbf{0.96} & 0.885 & \textbf{4.41} & \textbf{4.94} & \textbf{4.60} \\
+  &                                   & Chemistry   & \textbf{3225.56} & \textbf{0.86} & 0.897 & \textbf{4.88} & \textbf{4.70} & \textbf{4.28} \\
+  &                                   & Mathematics & \textbf{2200.24} & \textbf{0.74} & 0.895 & \textbf{4.90} & \textbf{4.79} & \textbf{3.56} \\
+  &                                   & Physics     & \textbf{3311.92} & \textbf{0.68} & 0.887 & \textbf{4.77} & \textbf{4.64} & \textbf{3.85} \\ \cline{2-9}
+  & \multirow{4}{*}{Gemma}           & Biology     & 85927.42         & 0.54          & 0.892 & 3.87          & 4.57 & 2.36 \\
+  &                                   & Chemistry   &128476.90         & 0.28          & 0.897 & 3.39          & 2.80 & 1.59 \\
+  &                                   & Mathematics &124944.40         & 0.48          & 0.896 & 4.11          & 3.71 & 2.91 \\
+  &                                   & Physics     &123664.20         & 0.04          & 0.887 & 4.18          & 4.03 & 1.65 \\ \cline{2-9}
+  & \multirow{4}{*}{LLaMA}           & Biology     &  9185.76         & 0.52          & 0.869 & 2.67          & 3.47 & 1.39 \\
+  &                                   & Chemistry   & 14043.34         & 0.26          & 0.864 & 1.62          & 1.55 & 0.35 \\
+  &                                   & Mathematics &  9608.58         & 0.22          & 0.880 & 2.78          & 2.81 & 1.18 \\
+  &                                   & Physics     & 11044.66         & 0.18          & 0.868 & 2.37          & 2.71 & 0.56 \\ \cline{2-9}
+  & \multirow{4}{*}{Phi}             & Biology     &  9953.84         & 0.66          & 0.866 & 2.54          & 3.67 & 2.49 \\
+  &                                   & Chemistry   &  8030.40         & 0.50          & 0.865 & 2.08          & 2.05 & 1.18 \\
+  &                                   & Mathematics &  9678.46         & 0.38          & 0.854 & 0.59          & 2.36 & 0.80 \\
+  &                                   & Physics     & 10481.10         & 0.56          & 0.852 & 1.86          & 2.51 & 1.24 \\ \cline{2-9}
+  & \multirow{4}{*}{Qwen}            & Biology     & 11397.98         & 0.36          & 0.878 & 4.00          & 4.08 & 1.93 \\
+  &                                   & Chemistry   & 16812.82         & 0.12          & 0.883 & 3.76          & 3.05 & 1.39 \\
+  &                                   & Mathematics &  8372.72         & \textbf{0.68} & 0.875 & 2.56          & 4.31 & 2.86 \\
+  &                                   & Physics     & 17071.24         & 0.30          & 0.867 & 3.69          & 3.74 & 1.28 \\
+\hline
+\end{tabular}
+\normalsize
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Illustrative high-quality items generated under S3 (SP+QC) using Gemini, one per subject.}
+\label{tab:example-items-s3}
+\begin{tabular}{|p{1.3cm}|p{4.1cm}|p{4.2cm}|p{1.8cm}|p{4.1cm}|}
+\hline
+\textbf{Subject} & \textbf{Example question stem} & \textbf{Short solution (generator)} & \textbf{Answer} & \textbf{Judge evaluation (summary)} \\ \hline
+Biology &
+In a population of butterflies, the allele for black wings (B) is dominant over the allele for white wings (b). If 16\% of the butterflies have white wings, what is the frequency of the dominant allele B, assuming Hardy--Weinberg equilibrium? &
+Recessive phenotype frequency is \(q^2 = 0.16\), so \(q = 0.4\). With \(p + q = 1\), we get \(p = 1 - 0.4 = 0.6\). &
+0.6 &
+The judge independently solves the Hardy--Weinberg problem, obtains \(p = 0.6\), and rates Clarity, Context, and Quality of working as 5.0 with FAA marked as correct. \\ \hline
+Physics &
+A \(2.0\) kg block slides down a frictionless \(30^{\circ}\) incline of length \(5.0\) m starting from rest. What is its speed at the bottom of the incline? &
+Height is \(h = 5.0 \sin 30^{\circ} = 2.5\) m. Using energy conservation \(mgh = \tfrac{1}{2}mv^2\) gives \(v = \sqrt{2gh} = \sqrt{2 \cdot 9.8 \cdot 2.5} \approx 7.00\) m/s. &
+\(7.00\,\text{m/s}\) &
+The judge confirms conservation-of-energy reasoning, considers the numbers realistic, and assigns rubric scores of 5.0 on all aspects with FAA marked as correct. \\ \hline
+Chemistry &
+What mass of NaCl (in grams) is required to prepare \(250.0\) mL of a \(0.200\) M NaCl solution? (Na = 23.0, Cl = 35.5.) &
+Moles of NaCl are \(0.200 \times 0.250 = 0.050\) mol. The molar mass is \(23.0 + 35.5 = 58.5\) g/mol. The mass is \(0.050 \times 58.5 = 2.925\) g, rounded to \(2.93\) g. &
+\(2.93\,\text{g}\) &
+The judge states that the question matches standard laboratory practice, notes consistent handling of significant figures, and gives rubric scores of 5.0 on all aspects with FAA marked as correct. \\ \hline
+Mathematics &
+The revenue from selling \(x\) units of a product is \(R(x) = 150x - 0.25x^2\). What is the marginal revenue when 50 units are sold? &
+Marginal revenue is \(R'(x) = 150 - 0.5x\). Evaluating at \(x = 50\) gives \(R'(50) = 150 - 0.5 \cdot 50 = 125\). &
+125 &
+The judge recognises this as a standard derivative-application problem, finds the reasoning sound, and assigns scores of 5.0 for Clarity and Quality of working with FAA marked as correct. \\ \hline
+\end{tabular}
+\normalsize
+\end{table*}
+
+\section{Results and Discussion}
+
+This section discusses two main outcomes: final-answer accuracy across prompting structures and models, and item quality as captured by the rubric scores.
+
+\subsection{Final Answer Accuracy}
+
+Table~\ref{tab:main-results} shows that SP+QC (S3) gives the highest Final Answer Accuracy (FAA) in almost all subjects for the strongest generator. For Gemini, S3 reaches 0.96 FAA in biology and 0.86 in chemistry, and also improves mathematics and physics over S1 and S2. In contrast, SP (S1) and SP+CoT (S2) often remain below 0.8, particularly in physics. Local models benefit less: S3 sometimes raises FAA over S1 and S2, but many configurations still fall in the 0.2–0.6 range.
+
+These patterns are consistent with the findings of Chan and colleagues, who report that chain-of-thought prompting improves STEM reasoning but does not eliminate conceptual and numerical errors \cite{chan2025}. In our results, S2 shows similar behaviour: FAA is occasionally higher than S1 but the gains are smaller and less stable than with S3, especially for local models with limited capacity. SP+QC instead encodes correctness-related requirements directly in the prompt (for example, clean numerical hygiene and a single correct key), while the verifier uses the same dimensions when deciding whether an item is correct. This prompt–rubric symmetry appears to help the model avoid obvious mistakes and explains why S3 yields the highest FAA for Gemini and the clearest improvements over S1 and S2.
+
+\subsection{Item Quality and Limitations}
+
+Rubric scores in Table~\ref{tab:main-results} show that S3 also improves item quality. For Gemini, SP+QC produces clarity and context scores above 4.7 on the 0 to 5 scale for most subjects, whereas S1 and S2 are typically 0.3–0.6 points lower. Quality-of-working scores under S3 are likewise higher, indicating that the short solutions are more coherent and numerically consistent. The illustrative S3 items in Table~\ref{tab:example-items-s3} resemble standard Grade 12 textbook questions, with realistic contexts and compact yet correct reasoning. Local models gain less, but several S3 configurations still move from weak to acceptable quality on the rubric.
+
+This improvement is in line with assessment studies where Rahmah and co authors find that many teacher-written MCQs fail clarity, context, or distractor-effectiveness criteria even when overall test reliability is acceptable \cite{rahmah2020}. By turning similar criteria into explicit prompt constraints, SP+QC pushes the generator toward items that better meet those standards than S1 or S2. BERTScore similarity between generator and verifier solutions remains high for most configurations, indicating that both models usually follow comparable solution structures even when rubric scores differ \cite{hanna2021finegrained}. However, similarity alone can hide subtle conceptual or numerical issues, so rubric-based analysis remains necessary.
+
+These findings should be interpreted with care. The scoring still relies on a single Gemini configuration as an LLM-as-judge, without human annotators, so rubric scores and FAA labels may inherit systematic biases or blind spots from the verifier. The analysis is based on single items rather than full tests, so difficulty and discrimination at exam level are not measured directly. The models and subjects are restricted to one Gemini variant and four open LLMs on Grade 12 STEM topics. Future work should introduce expert raters, incorporate student response data, and compare LLM-based scores with classical psychometric indicators before applying this pipeline in higher-stakes assessment settings.
+
+\section{Conclusion}
+
+This paper investigated three prompting structures for LLM-based STEM MCQ generation across four subjects and five models. A separate Gemini verifier acted as an LLM-as-judge and evaluated each item along four dimensions: clarity, context accuracy, final-answer correctness, and quality of working, complemented by BERTScore similarity between generator and verifier solutions.
+
+The quality-constrained prompt (SP+QC) substantially improved item quality for the strongest generator model. For Gemini, SP+QC raised final-answer accuracy to as high as 0.96 in biology and 0.86 in chemistry and produced clarity and context scores above 4.7 in most subjects, while maintaining high-quality reasoning. Hidden chain-of-thought prompting provided smaller and less stable gains, especially for local models, which remained notably weaker overall. Both prompt structure and model capacity therefore matter for dependable STEM item generation.
+
+For practitioners, the main message is that LLM-generated quizzes should be treated as drafts rather than final assessments. Carefully engineered prompts that encode quality constraints, combined with an LLM-as-judge and light expert review, can turn LLMs into useful assistants for building STEM question banks. Future work will extend this approach to include human raters and student response data, explore additional item types, and investigate hybrid pipelines that combine prompt engineering with code-based verification or fine-tuning.
+
+\section*{Acknowledgment}
+
+This work was funded by the Indonesian Ministry of Higher Education, Science and Technology under Skema SINERGI Hilirisasi Inovasi Komersial; the Institut Teknologi Sepuluh Nopember (ITS) under Riset Kolaborasi Indonesia, Penelitian Departemen, and Penelitian Kemitraan A; the Indonesian Endowment Fund for Education (LPDP) on behalf of the Indonesian Ministry of Higher Education, Science and Technology and managed under the EQUITY Program (Contract No. 4299/B3/DT.03.08/2025 \& No 3029/PKS/ITS/2025); HETI ADB ITS under Penelitian Post-Doctoral; and Ethereum Foundation under Academic Grants Round 2025.
+
+\bibliographystyle{IEEEtran}
+\bibliography{ref}
+
+\end{document}
